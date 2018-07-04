@@ -4,8 +4,6 @@
 
 Backup or restore all user profiles on a host.
 
-*Robocopy wrapper*
-
 Takes a source and destination as an argument.
 
 Progress bar wrapper provides rather nice user feedback when the profiles are
@@ -13,9 +11,9 @@ large.
 
 Provided verbose stream for viewing skipped files.
 
-Batch scripts are used to get around Group Policy limitations in present
+[[file:RUN.BAT][RUN.BAT]] batch script is used to get around Group Policy limitations in present
 environment..
 
-Script located [[file:powershell/ps/Backup.ps1][here]].
+Script located [[file:ps/Backup.ps1][here]].
 
 *TODO:* Implement hardlinking for incremental backups
