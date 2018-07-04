@@ -14,6 +14,11 @@ Provided verbose stream for viewing skipped files.
 [[file:RUN.BAT][RUN.BAT]] batch script is used to get around Group Policy limitations in present
 environment..
 
-Script located [[file:ps/Backup.ps1][here]].
+There are two versions of the script - one for Active Directory environments and
+one for machines that only have local accounts.
+
+AD Environment Script located [[file:ps/RoboRapAD.ps1][here]].
+
+Local Account Script located [[file:ps/RoboRap.ps1][here]].
 
 *TODO:* Implement hardlinking for incremental backups

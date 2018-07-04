@@ -1,70 +1,72 @@
-# this script takes two parameters - a source directory parent and a destination directory parent.
 Param (
     [Parameter(Mandatory=$True,Position=1)]
-    [string]$srcParent,
+    [string]$SourceParent,
     [Parameter(Mandatory=$True,Position=2)]
-    [string]$destParent,
+    [string]$DestinationParent,
     [Parameter(Mandatory=$False,Position=3)]
-    [switch]$automateUsers,
-    [Parameter(Mandatory=$False,Position=4)]
-    [switch]$automateExcludes
+    [switch]$AutomateUsers
 )
 
-if ($PSBoundParameters.ContainsKey('automateUsers')) {
-    $global:automateUsers=$True
-} else {
-    $global:automateUsers=$False
+# Set global variables.
+$Host.PrivateData.ProgressForegroundColor = "Yellow"
+$Host.PrivateData.ProgressBackgroundColor = "DarkBlue"
+$Host.PrivateData.ErrorBackgroundColor    = "Black"
+$Host.PrivateData.ErrorForegroundColor    = "Red"
+$Host.PrivateData.VerboseBackgroundColor  = "Black"
+$Host.PrivateData.VerboseForegroundColor  = "Yellow"
+$Host.PrivateData.WarningBackgroundColor  = "Black"
+$Host.PrivateData.WarningForegroundColor  = "Red"
+
+function Set-Parents () {
+    $global:SourceParent = $SourceParent
+    $global:DestinationParent = $DestinationParent
 }
 
-if ($PSBoundParameters.ContainsKey('automateExcludes')) {
-    $global:automateExcludes=$True
-} else {
-    $global:automateExcludes=$False
+function Set-OptParams () {
+    if ($PSBoundParameters.ContainsKey('AutomateUsers')) {
+	$global:AutomateUsers = $True
+    } else {
+	$global:AutomateUsers = $False
+    }
 }
 
-function get_excludes ($excludes_hash) {
-    $excludes = @()
+function Set-CopyType () {
+    # Set a flag/output string for determining whether we're backing up or restoring
+    $SourceLetter = (Get-Item $SourceParent).PSDrive.Name
+    $DestinationLetter = (Get-Item $DestinationParent).PSDrive.Name
 
-    $appdata_excludes = [ordered]@{
-	"AppData CrashDumps" = "/xd AppData\Local\CrashDumps"
-	"Google AppData"     = "/xd AppData\Local\Google"
-	"Microsoft AppData"  = "/xd AppData\Local\Microsoft"
-	"Mozilla AppData"    = "/xd AppData\Local\Mozilla"
-	"Package AppData"    = "/xd AppData\Local\Packages"
-	"Temporary AppData"  = "/xd AppData\Local\Temp"
+    if ($DestinationLetter -match "F|B" -Or $DestinationParent -like "*Backups*") {
+	$global:CopyType = "Backup"
+    } elseif ($SourceLetter -match "F|B" -Or $SourceParent -like "*Backups*") {
+	$global:CopyType = "Restore"
+    } else {
+	Write-Warning "Invalid path. Aborting."
+	exit
     }
-
-    $dot_excludes = [ordered]@{
-	"Emacs Config"	= "/xd .emacs.d"
-	"Dot Cache"	= "/xd .cache"
-	"Dot Config"	= "/xd .config"
-	"Dot Local"	= "/xd .local"
-	"SSH Config"	= "/xd .ssh"
-    }
-
-    foreach ($exclude in $excludes_hash.keys) {
-	if (ask "Exclude $exclude") {
-	    $excludes += $excludes_hash[$exclude]
-	} else {
-	    if ($exclude -match "^AppData$") {
-		get_excludes $appdata_excludes
-	    }
-	    if ($exclude -match "^Dot Directories$") {
-		get_excludes $dot_excludes
-	    }
-	}
-    }
-    return $excludes
 }
 
-# this function analyzes robocopy's log file and creates a powershell
+function Set-Users () {
+    $global:Users = Get-LocalUser |
+      ? { $_.Enabled -eq "True" -And $_.Name -notlike "default*" } |
+      select -ExpandProperty Name
+}
+
+function Set-Globals () {
+    Set-Parents
+    Set-OptParams
+    Set-CopyType
+    Set-Users
+}
+
+# this function analyzes Robocopy's Log file and creates a powershell
 # object based on it's summary.
-function roboSummary ($log) {
+function Get-RoboSummary ($Log) {
     $cellHeaders = @("Total", "Copied", "Skipped", "Mismatch", "Failed", "Extras")
     $rowTypes    = @("Dirs", "Files", "Bytes")
     # Extract rows
-    $rows = cat $log -Raw | Select-String -Pattern "(Dirs|Files|Bytes)\s*:(\s*([0-9]+(\.[0-9]+)?( [a-zA-Z]+)?)+)+" -AllMatches
-    # Merge each row with its corresponding row type, with property names of the cell headers
+    $rows = cat $Log -Raw |
+      Select-String -Pattern "(Dirs|Files|Bytes)\s*:(\s*([0-9]+(\.[0-9]+)?( [a-zA-Z]+)?)+)+" -AllMatches
+    # Merge each row with its corresponding row type, with property Names of the cell headers
     for($x = 0; $x -lt $rows.Matches.Count; $x++) {
 	$rowType  = $rowTypes[$x]
 	$rowCells = $rows.Matches[$x].Groups[2].Captures | foreach{ $_.ToString().Trim() }
@@ -82,10 +84,10 @@ function roboSummary ($log) {
     }
 }
 
-# this function uses the roboSummary function to analyse robocopy's
-# log file and output useful information to the user.
-function checkLog ($log) {
-    $results = roboSummary -log $log
+# this function uses the Get-RoboSummary function to analyse Robocopy's
+# Log file and output useful information to the User.
+function Check-Log ($Log) {
+    $results = Get-RoboSummary -Log $Log
     foreach ($result in $results) {
 	$type = $result.type
 	$copied = $result.copied
@@ -100,147 +102,201 @@ function checkLog ($log) {
 	if ($failed -gt 0) { $fail = $true }
     }
     if ($fail) {
-	Write-Host -back black -fore red  "Files skipped. Please see the log."
-	$report = cat $log | gu | Select-String -pattern " Error [0-9]+ \([0-9]x[0-9]+\) "
+	Write-Warning "Files skipped. Please see the Log."
+	$report = cat $Log | gu | Select-String -pattern " Error [0-9]+ \([0-9]x[0-9]+\) "
 	foreach ($line in $report) {
 	    $line = $line -replace "\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} | \d+ \(\dx\d+\)| File"
 	    Write-Verbose "$line"
 	}
     } else {
-	Write-Host -back black -fore green "Files successfully copied."
+	Write-Host -Back Black -Fore Green "Files successfully copied."
     }
 }
 
-function copyDirectory ($src, $dest, $log, $stage) {
+# Robocopy wrapper that adds a progress bar by first running Robocopy
+# with the list only parameter and Logging the output of that to a
+# staging file that we add up the number of Bytes from using our
+# Get-RoboSummary function.
+#
+# We then run our actual Robocopy job, wrapping it in a while loop,
+# that compares the Bytes copied from it's Log every 2 seconds, to the
+# total determined from the staging file.
+#
+# We calculate percentage, which we use when calling write-process
+# from inside our loop.
+#
+# Finally the function runs checkLog to make sure all Files copied
+# sucessfully.
+function Copy-Directory ($Source, $Destination, $Log, $Stage) {
     #
     # Robocopy Params:
     #
-    # /mir	= Mirror mode
-    # /np	= Don't show progress percentage in log
-    # /nc	= Don't log file classes (existing, new file, etc.)
-    # /ndl      = No Directory List - don't log directory names.
-    # /bytes	= Show file sizes in bytes
-    # /njh	= Do not display robocopy job header (JH)
-    # /njs	= Do not display robocopy job summary (JS)
-    # /tee	= Display log in stdout AND in target log file
+    # /mir	= Mirror mode. equivalent to /e plus /purge
+    # /np	= Don't show progress percentage in Log
+    # /nc	= Don't Log file classes (existing, new file, etc.)
+    # /ndl      = No Directory List - don't Log directory names.
+    # /Bytes	= Show file sizes in Bytes
+    # /njh	= Do not display Robocopy job header (JH)
+    # /njs	= Do not display Robocopy job summary (JS)
+    # /tee	= Display Log in stdout AND in target Log file
     # /e	= Copy Subfolders, including Empty Subfolders.
-    # /xa	= Exclude files with any of the given Attributes - s = system, h = hidden, t = temporary
+    # /xa	= Exclude Files with any of the given Attributes - s = system, h = hidden, t = temporary
     # /xd	= Exclude directories matching given names/paths.
-    # /xf	= Exclude files matching given names/paths/wildcards.
+    # /xf	= Exclude Files matching given names/paths/wildcards.
     # /xj	= Exclude junction points. (normally included by default).
-    # /b	= Copy files in Backup mode.
+    # /b	= Copy Files in Backup mode.
     # /r:n	= Number of Retries on failed copies - default is 1 million.
     # /w:n	= Wait time between retries - default is 30 seconds.
     # /mt:n	= Multithreaded copying, n = no. of threads to use (1-128), default = 8 threads, use of /LOG is recommended for better performance.
-    # /j	= Copy using unbuffered I/O (recommended for large files).
-    # /z	= Copy files in restartable mode (survive network glitch). Potential performance issues ... see https://serverfault.com/questions/812210/robocopy-is-20x-slower-than-drag-droping-files-between-servers
-    # /log	= Output status to LOG file (overwrite existing log).
+    # /j	= Copy using unbuffered I/O (recommended for large Files).
+    # /z	= Copy Files in restartable mode (survive network glitch). Potential performance issues ... see https://serverfault.com/questions/812210/Robocopy-is-20x-slower-than-drag-droping-Files-between-servers
+    # /Log	= Output status to LOG file (overwrite existing Log).
     # /ipg:n    = Inter-Packet Gap (ms), to free bandwidth on slow lines.
-    # /l        = List only - don’t copy, timestamp or delete any files.
+    # /l        = List only - don’t copy, timestamp or delete any Files.
     #
-    $rargs = "/e /nc /ndl /np /bytes /r:2 /w:2 /mt:12"
+    $RoboParams = "/mir /nc /ndl /np /Bytes /r:2 /w:2 /mt:12"
 
-    if ($AutomateExcludes) {
-	$opt_excludes = @(
-	    "/xd AppData\Local\CrashDumps"
-	    "/xd AppData\Local\Microsoft"
-	    "/xd AppData\Local\Packages"
-	    "/xd AppData\Local\Temp"
-	)
-    } else {
-	$home_excludes = [ordered]@{
-	    "Junction Points" = "/xj"
-	    "Dot Files"	      = "/xf .*"
-	    "Dot Directories" = "/xd .*"
-	    "AppData"	      = "/xd AppData"
-	    "Downloads"	      = "/xd Downloads"
-	    "iTunes"          = "/xd *iTunes* /xf *iTunes*"
-	    "OneDrive"        = "/xd OneDrive"
-	}
-	$opt_excludes = get_excludes $home_excludes
-    }
-
-    $default_excludes = @(
+    $Excludes = @(
+	"/xj"
 	"/xa:sht"
 	"/xf *.ost"
 	"/xf *.pst"
-	"/xf desktop.ini"
 	"/xf .DS_Store"
+	"/xf .localized"
+	"/xf desktop.ini"
+	"/xd AppData"
+	"/xd MicrosoftEdgeBackups"
     )
 
     # Staging Robocopy Process
-    Write-Host -back black -fore magenta "Analysing Robocopy job..."
-    Write-Verbose "SRC: $src"
-    Write-Verbose "DEST: $dest"
-    Write-Verbose "ARGS: $rargs /l"
-    Write-Verbose "LOG: $stage"
-    Write-Verbose "EXCLUDES: $default_excludes $opt_excludes"
-    Write-Verbose "ALL: $src $dest $rargs /l /log:$stage $opt_excludes $default_excludes"
+    Write-Host -Back Black -Fore magenta "Analysing Robocopy job..."
+    Write-Verbose "SOURCE: $Source"
+    Write-Verbose "DESTINATION: $Destination"
+    Write-Verbose "OPTIONS: $RoboParams /l"
+    Write-Verbose "LOG: $Stage"
+    foreach ($Exclude in $Excludes) {
+	if ($Exclude -Eq $Excludes[0]) {
+	    Write-Verbose "EXCLUDES: $Exclude"
+	} else {
+	    Write-Verbose "          $Exclude"
+	}
+    }
 
-    $stageArgs = "$src $dest $rargs /l /log:$stage $opt_excludes $default_excludes"
-    Start-Process -FilePath robocopy.exe -ArgumentList $stageArgs -WindowStyle Hidden -Wait
+    $StageParams = "$Source $Destination $RoboParams /l /Log:$Stage $Excludes"
+    Write-Verbose "PARAMETERS: $StageParams"
+    Start-Process -Wait -FilePath Robocopy.exe -ArgumentList $StageParams -WindowStyle Hidden
 
-    $bytes = roboSummary -log $stage | ? { $_.Type -eq "Bytes" }
-    $bytesTotal = $bytes.copied
-    $gbTotal = [math]::Round($bytesTotal/1Gb, 2)
-    Write-Verbose "TOTAL: $bytesTotal Bytes, $gbTotal GB"
-    if ($bytesTotal -lt 1) {
-	Write-Host -back black -fore Green "No new or changed files."
+    $Bytes = Get-RoboSummary $Stage | ? { $_.Type -eq "Bytes" }
+    $BytesTotal = $Bytes.copied
+    $gbTotal = [math]::Round($BytesTotal/1Gb, 2)
+    Write-Verbose "TOTAL: $BytesTotal Bytes, $gbTotal GB"
+    # Check that there's actually anything to do. return if not.
+    if ($BytesTotal -lt 1) {
+	Write-Host -Back Black -Fore Green "No new or changed Files."
 	return
     }
 
     # Actual Robocopy Process
-    Write-Host -back black -fore magenta "Starting Robocopy job..."
-    Write-Verbose "SRC: $src"
-    Write-Verbose "DEST: $dest"
-    Write-Verbose "ARGS: $rargs"
-    Write-Verbose "LOG: $log"
-    Write-Verbose "EXCLUDES: $default_excludes $opt_excludes"
-    Write-Verbose "ALL: $src $dest $rargs /log:$log $opt_excludes $default_excludes"
+    Write-Host -Back Black -Fore magenta "Starting Robocopy job..."
+    Write-Verbose "SOURCE: $Source"
+    Write-Verbose "DESTINATION: $Destination"
+    Write-Verbose "OPTIONS: $RoboParams"
+    Write-Verbose "LOG: $Log"
+    foreach ($Exclude in $Excludes) {
+	if ($Exclude -Eq $Excludes[0]) {
+	    Write-Verbose "EXCLUDES: $Exclude"
+	} else {
+	    Write-Verbose "          $Exclude"
+	}
+    }
 
-    $roboArgs = "$src $dest $rargs /log:$log $default_excludes $opt_excludes"
-    $roboProcess = Start-Process -FilePath robocopy.exe -ArgumentList $roboArgs -PassThru -WindowStyle Hidden
+    $RealParams = "$Source $Destination $RoboParams /Log:$Log $Excludes"
+    Write-Verbose "PARAMETERS: $RealParams"
+    $RoboProcess = Start-Process -FilePath Robocopy.exe -ArgumentList $RealParams -PassThru -WindowStyle Hidden
     Start-Sleep -Milliseconds 500
 
     # Start progress bar loop if there's more than 256MB to copy
-    while (!$roboProcess.HasExited) {
+    while (!$RoboProcess.HasExited) {
 	if ($gbTotal -gt 0.25) {
 	    Start-Sleep -Milliseconds 2000
 
 	    # trim blank lines, error lines and header and summary
-	    $logContent = cat -Path $log | ? {$_.trim() -ne "" } |
+	    $LogContent = cat -Path $Log | ? {$_.trim() -ne "" } |
 	      Select-String -Pattern "^-{10,}$" -NotMatch |
 	      Select-String -Pattern "ERROR: RETRY LIMIT EXCEEDED." -NotMatch |
 	      Select-String -pattern " Error [0-9]+ \([0-9]x[0-9]+\) " -NotMatch |
-	      Select-String -Pattern "The process cannot access the file because it is being used by another process." -NotMatch |
+
+	    Select-String -Pattern "The process cannot access the file because it is being used by another process." -NotMatch |
 	      Select-String -Pattern "Waiting 2 seconds..." -NotMatch |
 	      select -skip 12 | select -skiplast 6
-	    $filesCopied = $logContent.Count
+	    $FilesCopied = $LogContent.Count
 
 	    # catch first iteration exception
-	    if ($filesCopied -gt 0) {
-		$regexBytes = '(?<=\s+)\d+(?=\s+)'
-		[Regex]::Matches($logContent, $regexBytes) | % {$bytesCopied = 0 } { $bytesCopied += $_.Value }
-		$gbCopied = [math]::Round($bytesCopied/1Gb, 2)
+	    if ($FilesCopied -gt 0) {
+		$RegexBytes = '(?<=\s+)\d+(?=\s+)'
+		[Regex]::Matches($LogContent, $RegexBytes) | % {$BytesCopied = 0 } { $BytesCopied += $_.Value }
+		$gbCopied = [math]::Round($BytesCopied/1Gb, 2)
 	    }
-	    if ($bytesCopied -gt 0 -And $bytesCopied -le $bytesTotal) {
+	    if ($BytesCopied -gt 0 -And $BytesCopied -le $BytesTotal) {
 		$percent = 0
-		$percent = (($bytesCopied/$bytesTotal)*100)
+		$percent = (($BytesCopied/$BytesTotal)*100)
 		$percent = [math]::Round($percent, 2)
-		$host.privatedata.ProgressForegroundColor = "Yellow"
-		$host.privatedata.ProgressBackgroundColor = "DarkBlue"
 		Write-Progress -Activity "PROGRESS:" -CurrentOperation "$gbCopied of $gbTotal GB, $percent% Complete" -Status " " -PercentComplete $percent
 	    }
 	}
     }
     Write-Progress -Activity "PROGRESS:" -Status " " -Completed
-    checkLog -log $log
+    Check-Log -Log $Log
 }
 
-# Function to ask yes or no question.
-function ask ($question) {
+function Get-Variables ($User, $Path) {
+    Write-Host -Back Black -Fore Cyan "$CopyType of $User started."
+    $Date = (Get-Date).ToString('yyyy-MM-dd')
+    if ($CopyType -eq "Backup") {
+	$LogPath = "$DestinationParent\Logs\$CopyType\$User"
+	$Log = "$LogPath\$Date.Log"
+	$StagePath = "$LogPath\Stage"
+	$Stage = "$StagePath\$Date.Log"
+	$Source = $Path
+	$Destination = "$DestinationParent\Users\$User"
+	Make-Directory -path $StagePath
+	Make-Directory -path $LogPath
+	Make-Directory -path $Destination
+	Copy-Directory -Source $Source -Destination $Destination -Log $Log -Stage $Stage
+    } elseif ($CopyType -eq "Restore") {
+	$LogPath = "$SourceParent\Logs\$CopyType\$User"
+	$Log = "$LogPath\$Date.Log"
+	$StagePath = "$LogPath\Stage"
+	$Stage = "$StagePath\$Date.Stage.Log"
+	$Source = "$SourceParent\Users\$User"
+	$Destination = $Path
+	Make-Directory -path $StagePath
+	Make-Directory -path $LogPath
+	Make-Directory -path $Destination
+	Copy-Directory -Source $Source -Destination $Destination -Log $Log -Stage $Stage
+    }
+    Write-Host -Back Black -Fore Cyan "$CopyType of $User finished."
+}
+
+# function to test if directory exists and if it doesn't create it. if
+# there's an error creating the directory we jump out of this
+# iteration of the loop, since we don't want to backup or restore the
+# parent.
+function Make-Directory ($path) {
+    if (-Not (Test-Path $path)) {
+	try {
+	    new-item -path $path -ItemType directory -ea stop | out-null
+	} catch {
+	    Write-Warning "Error creating $path - ABORTING."
+	    continue
+	}
+    }
+}
+
+# Function to Get-Answer yes or no question.
+function Get-Answer ($Question) {
     while ($true) {
-	$ans = Read-Host "$question"
+	$Ans = Read-Host "$Question"
 	switch -Regex ($ans) {
 	    '^y(es)?$' { return $true }
 	    '^n(o)?$' { return $false }
@@ -252,91 +308,32 @@ function ask ($question) {
     }
 }
 
-function copyWrap ($copyType, $srcParent, $destParent, $user) {
-    Write-Host -back black -fore cyan "$copyType of $user started."
-    if ($copyType -eq "Backup") {
-	$date = (Get-Date).ToString('yyyy-MM-dd')
-	$logPath = "$destParent\Logs\$copyType\$user"
-	$log = "$logPath\$date.log"
-	$stagePath = "$logPath\stage"
-	$stage = "$stagePath\$date.log"
-	$src = $path
-	$dest = "$destParent\Users\$user"
-	makeDirectory -path $stagePath
-	makeDirectory -path $logPath
-	makeDirectory -path $dest
-	copyDirectory -src $src -dest $dest -log $log -stage $stage
-    } elseif ($copyType -eq "Restore") {
-	$date = (Get-Date).ToString('yyyy-MM-dd')
-	$logPath = "$srcParent\Logs\$copyType\$user"
-	$log = "$logPath\$date.log"
-	$stagePath = "$logPath\stage"
-	$stage = "$stagePath\$date.stage.log"
-	$src = "$srcParent\Users\$user"
-	$dest = $path
-	makeDirectory -path $stagePath
-	makeDirectory -path $logPath
-	makeDirectory -path $dest
-	copyDirectory -src $src -dest $dest -log $log -stage $stage
-    }
-    Write-Host -back black -fore cyan "$copyType of $user finished."
+# main "kickoff" functions
+function Make-Parents () {
+    Make-Directory -path $SourceParent
+    Make-Directory -path $DestinationParent
 }
 
-# function to test if directory exists and if it doesn't create it. if
-# there's an error creating the directory we jump out of this
-# iteration of the loop, since we don't want to backup or restore the
-# parent.
-function makeDirectory ($path) {
-    if (-Not (Test-Path $path)) {
-	try {
-	    new-item -path $path -ItemType directory -ea stop | out-null
-	} catch {
-	    Write-Host -back black -fore Red "Error creating $path - ABORTING."
-	    continue
-	}
-    }
-}
 
-makeDirectory -path $srcParent
-makeDirectory -path $destParent
+function Copy-Users () {
+    Write-Host -back black -fore green "`nUsers = $Users"
 
-# Set a flag/output string for determining whether we're backing up or restoring
-$srcLetter = (Get-Item $srcParent).PSDrive.Name
-$destLetter = (Get-Item $destParent).PSDrive.Name
-
-if ($destLetter -eq "F" -Or $destParent -like "*Backups*") {
-    $copyType = "Backup"
-} elseif ($srcLetter -eq "F" -Or $srcParent -like "*Backups*") {
-    $copyType = "Restore"
-} else {
-    Write-Host -back black -fore Red "Invalid path. Aborting."
-    exit
-}
-
-$users = Get-LocalUser | ? { $_.Enabled -eq "True" -And $_.Name -notlike "default*" } | select -ExpandProperty Name
-
-Write-Host -back black -fore green "`nUsers = $users"
-
-foreach ($user in $users) {
-    if $(!AutomateUsers) {
-	$path =  gwmi Win32_userprofile | ? { $_.LocalPath -like "*$user*" } | select -ExpandProperty LocalPath
-	if ($path) {
-	    if (ask "`nWould you like to $copyType $user") {
-		copyWrap -copyType $copyType -srcParent $srcParent -destParent $destParent -user $user
+    foreach ($User in $Users) {
+	$Path =  gwmi Win32_userprofile | ? { $_.LocalPath -like "*$User*" } | select -ExpandProperty LocalPath
+	if (!$AutomateUsers) {
+	    if (Get-Answer "`nWould you like to $CopyType $User") {
+		Get-Variables -User $User -Path $Path
 	    } else {
-		Write-Host -back black -fore cyan "Skipping $user"
+		Write-Host -Back Black -Fore Cyan "Skipping $User"
 	    }
 	} else {
-	    Write-Host -back black -fore red "`n$user has no profile."
+	    Write-Host
+	    Get-Variables -User $User -Path $Path
 	}
-    } else {
-	$path =  gwmi Win32_userprofile | ? { $_.LocalPath -like "*$user*" } | select -ExpandProperty LocalPath
-	if ($path) {
-	    copyWrap -copyType $copyType -srcParent $srcParent -destParent $destParent -user $user
-	    if ($user -eq $users[-1]) { Write-Host }
-	} else {
-	    Write-Host -back black -fore red "`n$user has no profile."
-	}
+	if ($User -eq $Users[-1]) { Write-Host }
     }
-    if ($user -eq $users[-1]) { Write-Host }
 }
+
+Set-Globals
+Make-Parents
+Copy-Users
