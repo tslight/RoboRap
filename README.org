@@ -1,6 +1,6 @@
 #+AUTHOR: Toby Slight
 
-* BACKUP & RESTORE SHELL SCRIPTS
+* BACKUP & RESTORE SCRIPTS
 
 Backup or restore all user profiles on a host.
 
