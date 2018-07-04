@@ -1,0 +1,138 @@
+#+TITLE: BACKUP & RESTORE SHELL SCRIPTS
+#+AUTHOR: Toby Slight
+
+Backup or restore all user profiles on a host.
+
+* MAC BACKUPS
+** USAGE
+
+=backup [-br] [uxv] [-hH] [SHARE] [MOUNTPOINT]=
+
+*REQUIRED PARAMETERS*
+
+  /-b/ = Backup user profiles from /Users to /mountpoint/Users/user/date.
+
+  /-r/ = Restore user profiles from /mountpoint/Users/user/date to /Users.
+
+*OPTIONAL PARAMETERS*
+
+  /-u/ = Process all users without prompting.
+
+  /-x/ = Automatically choose sane excludes (Caches, Trash, etc).
+
+  /-v/ = Verbose stream. Useful for debugging.
+
+*DOCUMENTATION PARAMETERS*
+
+  /-h/ = Display this help and exit.
+
+  /-H/ = Display more in depth help page with paging.
+
+** ARGUMENTS
+
+*[SHARE]*
+
+Takes a share url as an argument, in either standard mount_smbfs form:
+
+=//username:password@host/path/to/PARENT/of/Users=
+
+Or standard mount_nfs form:
+
+=host:path/to/PARENT/of/Users=
+
+Or standard rsync URL form:
+
+=rsync://user@host:port/path/to/PARENT/of/Users=
+
+*[MOUNTPOINT]*
+
+Takes a mountpoint as an argument:
+
+=/Volumes/Backups=
+
+If a share has been entered it will be mounted here, otherwise we backup to this
+location.
+
+If no share or mountpoint is entered you will be prompted to enter them.
+
+If your share is a valid rsync url, there is no need to enter a mountpoint.
+
+** PITFALLS & CAVEATS
+
+*THE PATH ON THE REMOTE HOST MUST POINT TO PARENT OF USERS, NOT USERS!*
+
+Once mounted the mountpoint should contain the Users directory underneath it.
+
+The script backups to or restores from the following directory layout underneath
+the mountpoint:
+
+=/mountpoint/Users/user.name/date=
+
+And logs to:
+
+=/mountpoint/Logs/CopyType/user.name/date.log=
+
+/Where CopyType equals either Backup or Restore./
+
+*If this layout does not exist it will be created under the mountpoint.*
+
+Unless backing up to a samba share, user, group and permissions will be retained
+and each backup will be hard-linked against the last to save space and mimic the
+functionality of Time Machine.
+
+https://blog.interlinked.org/tutorials/rsync_time_machine.html
+
+When using Samba, in combination with Active Directory, ownership & permissions
+attributes are mangled, so these are not preserved in this use case, making
+incremental backups with hard links impossible. This is also the reason it’s
+necessary to recursively chown the users directory when restoring from a Samba
+share.
+
+*If possible use this script in conjunction with either an NFS or rsync server,
+or a USB drive.*
+
+It's also worth pointing out that for the time being preserving extended
+attributes is not supported.
+
+** EXAMPLES
+
+To backup from /Users to a Samba share mounted at /Volumes/Backups/Users:
+
+=backup -b //user:password@hostname/Backups/macOS /Volumes/Backups=
+
+To restore from a Samba share mounted at /Volumes/Backups/Users to /Users,
+choosing sane defaults:
+
+=backup -rx //user:password@hostname/Backups/macOS /Volumes/Backups=
+
+To backup from /Users to a rsync server, without prompting for each user:
+
+=backup -bu rsync://user@host:port/backups=
+
+To restore from /Users to a rsync server, with increased verbosity:
+
+=restore -rv rsync://user@host:port/backups=
+
+** EXTRA
+
+*.command files are used to make the script executable from the Finder.
+
+Script located [[file:macbash/bin/rwrap][here]].
+
+* WINDOWS BACKUPS
+
+*Robocopy wrapper*
+
+Takes a source and destination as an argument.
+
+Progress bar wrapper provides rather nice user feedback when the profiles are
+large.
+
+Provided verbose stream for viewing skipped files.
+
+Batch scripts are used to get around Group Policy limitations in present
+environment..
+
+Script located [[file:powershell/ps/Backup.ps1][here]].
+
+*TODO:* Implement hardlinking for incremental backups
