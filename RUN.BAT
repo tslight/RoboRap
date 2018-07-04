@@ -42,8 +42,8 @@ if %errorlevel% equ 2 (echo. & pause & exit)
 
 cls
 
-powershell.exe -ExecutionPolicy Bypass -Command "Unblock-File -Path %pwd%\ps\RoboWrapAD.ps1"
-powershell.exe -ExecutionPolicy Bypass -Command "%pwd%\ps\RoboWrapAD.ps1 %params%"
+powershell.exe -ExecutionPolicy Bypass -Command "Unblock-File -Path %pwd%\ps\RoboRapAD.ps1"
+powershell.exe -ExecutionPolicy Bypass -Command "%pwd%\ps\RoboRapAD.ps1 %params%"
 
 echo. & pause & exit
 
