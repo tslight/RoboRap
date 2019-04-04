@@ -2,52 +2,77 @@
 Param (
     [System.IO.FileInfo]$BackupPath=$(Read-Host "Enter backup directory"),
     [System.IO.FileInfo]$LogPath=$(Read-Host "Enter log directory"),
-    [int]$Days=60,
-    [switch]$Force
+    [int]$Days=60
 )
 
+#region import modules
 @(
-    TSUtils
+    'TSUtils'
 ) | Import-Module -Force -DisableNameChecking
+#endregion
 
-New-Path $LogPath
-$Date = Get-Date -UFormat "%Y-%m-%d"
-$Name = ($MyInvocation.MyCommand.Name) -Replace ".ps1",""
-$Log = "$LogPath\$Name-$Date.log"
+#region set globals
+$global:Date = Get-Date -UFormat "%Y-%m-%d"
+$global:Name = ($MyInvocation.MyCommand.Name) -Replace ".ps1",""
+$global:Log  = "$LogPath\$Name-$Date.log"
+#endregion
 
-$OlderThan = ((Get-Date).AddDays(-$Days)).Date
+#region get users function
+function Get-OldBackups {
+    [CmdletBinding(SupportsShouldProcess)]
+    Param (
+	[Parameter(Mandatory)]
+	[System.IO.FileInfo]$BackupPath,
+	[Parameter(Mandatory)]
+	[DateTime]$OlderThan
+    )
+    Get-ChildItem $BackupPath |
+      Where-Object {
+	  $_.Name -Match '^[A-z]+\.[A-z]+$|^[A-z]$'
+      } | Select-Object -ExpandProperty Fullname |
+	Get-ChildItem |
+	Where-Object {
+	    ($_.Name -match '^\d{4}\-\d{2}\-\d{2}') -And
+	    ($_.LastWriteTime -lt $OlderThan) -And
+	    ((Get-Date $_.Name) -lt $OlderThan)
+	} | Select-Object -ExpandProperty Fullname
+}
+#endregion
 
-Start-Transcript -Path $Log -Append
-
-Write-Host "Finding old backups under $BackupPath"
-
-$Users = Get-ChildItem $BackupPath |
-  Where-Object {
-      $_.Name -Match '^[A-z]+\.[A-z]+$|^[A-z]$'
-  } | Select-Object -ExpandProperty Fullname
-
-$Total = 0
-
-foreach ($User in $Users) {
-    $OldBackups = @(
-	Get-ChildItem $User |
-	  Where-Object {
-	      ($_.Name -match '^\d{4}\-\d{2}\-\d{2}') -And
-	      ($_.LastWriteTime -lt $OlderThan) -And
-	      ((Get-Date $_.Name) -lt $OlderThan)
-	  } | Select-Object -ExpandProperty Fullname
+#region delete old backups function
+function Remove-OldBackups {
+    [CmdletBinding(SupportsShouldProcess)]
+    Param (
+	[Parameter(Mandatory,ValueFromPipeline)]
+	[string[]]$Path
     )
 
-    foreach ($Backup in $OldBackups) {
+    begin {
+	$Total = 0
+    }
+
+    process {
 	Write-Host "Getting size of $Backup..."
-	$Size = Get-DiskUsage $Backup -Bytes -ErrorAction SilentlyContinue
+	$Bytes = Get-DiskUsage $Backup -Bytes -ErrorAction SilentlyContinue
+	$Size  = ConvertFrom-BytesToHumanReadable $Bytes
 	Write-Host "Removing $Backup ($Size)..."
-	Remove-Item $Backup -Recurse -Force:($Force)
-	$Total += $Size
+	Remove-Item $Backup -Recurse -Force -ErrorAction SilentlyContinue
+	$Total += $Bytes
+    }
+
+    end {
+	Write-Output $Total
     }
 }
+#endregion
 
-$Total = ConvertFrom-BytesToHumanReadable $Total
+#region main
+Start-Transcript -Path $Log -Append
+New-Path $LogPath -Type Directory
+Write-Host "Finding backups older than $Days days under $BackupPath"
+$OlderThan = ((Get-Date).AddDays(-$Days)).Date
+$Total     = Get-OldBackups $BackupPath $OlderThan | Remove-OldBackups
+$Total     = ConvertFrom-BytesToHumanReadable $Total
 Write-Host "Successfully freed $Total."
-
 Stop-Transcript
+#endregion
