@@ -1,0 +1,24 @@
+#+AUTHOR: Toby Slight
+
+* BACKUP & RESTORE SCRIPTS
+
+Backup or restore all user profiles on a host.
+
+Takes a source and destination as an argument.
+
+Progress bar wrapper provides rather nice user feedback when the profiles are
+large.
+
+Provided verbose stream for viewing skipped files.
+
+[[file:RUN.BAT][RUN.BAT]] batch script is used to get around Group Policy limitations in present
+environment..
+
+There are two versions of the script - one for Active Directory environments and
+one for machines that only have local accounts.
+
+AD Environment Script located [[file:ps/RoboRapAD.ps1][here]].
+
+Local Account Script located [[file:ps/RoboRap.ps1][here]].
+
+*TODO:* Implement hardlinking for incremental backups
